@@ -77,22 +77,22 @@ def main():
         train_full_attention=block_args.train_full_attention == 'true',
         add_special_domain_tokens=block_args.add_special_domain_tokens == 'true'
     )
-    eval_dataset: Dataset = get_dataset(
-        fp=data_args.eval_fp,
-        model_name=model_args.model_name,
-        max_length=data_args.max_length,
-        tokenizer=tokenizer,
-        train_prompt=False,
-        train_full_attention=True,
-        add_special_domain_tokens=block_args.add_special_domain_tokens == 'true'
-    )
+    # eval_dataset: Dataset = get_dataset(
+    #     fp=data_args.eval_fp,
+    #     model_name=model_args.model_name,
+    #     max_length=data_args.max_length,
+    #     tokenizer=tokenizer,
+    #     train_prompt=False,
+    #     train_full_attention=True,
+    #     add_special_domain_tokens=block_args.add_special_domain_tokens == 'true'
+    # )
 
     model.train()
     trainer = Trainer(
         model=model,
         args=train_args,
         train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
+        # eval_dataset=eval_dataset,
         data_collator=BlockBatchCollector(pad_token_id=tokenizer.pad_token_id, max_length=data_args.max_length),
         callbacks=[CustomSave()],
         compute_loss_func=CEReductionSumOutputLoss(

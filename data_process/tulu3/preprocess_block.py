@@ -8,15 +8,18 @@ import json
 import fire
 import random
 
+from typing import Optional
 from tqdm import tqdm
 from bson.objectid import ObjectId
 from dataclasses import dataclass
 from transformers import AutoTokenizer, PreTrainedTokenizer
 from typing import Any, List
 
-from define import (
+from .define import (
     TuluInstance, MessageWithChunks, TuluInstanceWithChunks, SFTInputs, SFTInstanceWithChunks
 )
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 re_sep_spliter = {
     "\n\n": re.compile(r'(\s*\n\n\s*)'),
@@ -28,9 +31,12 @@ re_sep_spliter = {
 }
 
 chunk_prefix_suffix = {
-    "system": ("<|system|>\n", "\n"),
-    "user": ("<|user|>\n", "\n"),
-    "assistant": ("<|assistant|>\n", "<|end_of_text|>\n"),
+    # "system": ("<|system|>\n", "\n"),
+    # "user": ("<|user|>\n", "\n"),
+    # "assistant": ("<|assistant|>\n", "<|end_of_text|>\n"),
+    "system": ("<|im_start|>system\n", "<|im_end|>\n"),
+    "user": ("<|im_start|>user\n", "<|im_end|>\n"),
+    "assistant": ("<|im_start|>assistant\n", "<|im_end|>\n"),
 }
 
 
@@ -105,22 +111,24 @@ def to_chunks(messages: List[MessageWithChunks]) -> List[str]:
     return chunks
 
 
-def to_train_data(ins: TuluInstanceWithChunks, tokenizer: PreTrainedTokenizer) -> List[SFTInstanceWithChunks]:
+def to_train_data(ins: TuluInstanceWithChunks, tokenizer: PreTrainedTokenizer, with_system_prompt: bool = False) -> List[SFTInstanceWithChunks]:
     data = []
+    offset = 1 if with_system_prompt else 0
     for i in range(0, len(ins.messages)):
         if ins.messages[i].role != "assistant":
             continue
 
         conversation = [m.to_dict() for m in ins.messages[:i]]
         prompt = tokenizer.apply_chat_template(conversation=conversation, add_generation_prompt=True, tokenize=False)
-        response = ins.messages[i].content + "<|end_of_text|>"
+        response = ins.messages[i].content + tokenizer.eos_token
 
+        # 包含 system
         prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
         response_ids = tokenizer.encode(response, add_special_tokens=False)
         input_ids = prompt_ids + response_ids
         labels = [-100] * len(prompt_ids) + response_ids
 
-        if i > 1:
+        if i > 1 + offset:
             # Make the last user message have global attention.
             chunks = to_chunks(messages=ins.messages[:i - 1])
             prefix, suffix = chunk_prefix_suffix[ins.messages[i - 1].role]
@@ -129,11 +137,11 @@ def to_train_data(ins: TuluInstanceWithChunks, tokenizer: PreTrainedTokenizer) -
         else:
             # Split the last user message, the last chunk of the user message has global attention.
             chunks = to_chunks(messages=ins.messages[:i])
-            train_block = len(chunks) > 1 and random.random() < 0.45
+            train_block = len(chunks) > (1 + offset) and random.random() < 0.45
         if not train_block:
             continue
 
-        chunks[-1] += "<|assistant|>\n"
+        chunks[-1] += "<|im_start|>assistant\n"
 
         block_ids, block_tokens = [], []
         for c in chunks:
@@ -210,36 +218,68 @@ def process_tulu_instance(ins: TuluInstance) -> TuluInstanceWithChunks:
 
 @dataclass
 class Args:
-    idx: int
+    # idx: int
     hf_data_dir: str = "datahub/tulu3/hf/"
+    model_name: str = "meta-llama/Llama-3.1-8B"
+    system_prompt: Optional[str] = None
 
 
-def main(args: Args):
+def main(args: Args, idx: int):
     random.seed(42)
     tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(
-        pretrained_model_name_or_path='meta-llama/Llama-3.1-8B',
+        pretrained_model_name_or_path=args.model_name,
     )
-    tokenizer.chat_template = "{% for message in messages %}{% if message['role'] == 'system' %}{{ '<|system|>\n' + message['content'] + '\n' }}{% elif message['role'] == 'user' %}{{ '<|user|>\n' + message['content'] + '\n' }}{% elif message['role'] == 'assistant' %}{% if not loop.last %}{{ '<|assistant|>\n'  + message['content'] + eos_token + '\n' }}{% else %}{{ '<|assistant|>\n'  + message['content'] + eos_token }}{% endif %}{% endif %}{% if loop.last and add_generation_prompt %}{{ '<|assistant|>\n' }}{% endif %}{% endfor %}"
+    default_chat_template = "{% for message in messages %}{% if message['role'] == 'system' %}{{ '<|system|>\n' + message['content'] + '\n' }}{% elif message['role'] == 'user' %}{{ '<|user|>\n' + message['content'] + '\n' }}{% elif message['role'] == 'assistant' %}{% if not loop.last %}{{ '<|assistant|>\n'  + message['content'] + eos_token + '\n' }}{% else %}{{ '<|assistant|>\n'  + message['content'] + eos_token }}{% endif %}{% endif %}{% if loop.last and add_generation_prompt %}{{ '<|assistant|>\n' }}{% endif %}{% endfor %}"
+    if tokenizer.chat_template is None:
+        tokenizer.chat_template = default_chat_template
 
-    dataset: List[TuluInstance] = load_tulu_dataset(idx=args.idx, data_dir=os.path.join(args.hf_data_dir, "split"))
+    dataset: List[TuluInstance] = load_tulu_dataset(idx=idx, data_dir=os.path.join(args.hf_data_dir, "split"))
     results: List[TuluInstanceWithChunks] = []
+    # 处理分块，每个message分块
     for i in tqdm(range(0, len(dataset)), total=len(dataset), desc="Process: "):
         ins = process_tulu_instance(ins=dataset[i])
+        if args.system_prompt is not None:
+            ins.messages = [MessageWithChunks.from_dict(
+                {
+                    "role": "system",
+                    "content": args.system_prompt,
+                    "chunks": [args.system_prompt],
+                }
+            )] + ins.messages
         results.append(ins)
 
     sft_instances: List[SFTInstanceWithChunks] = []
     for i in tqdm(range(0, len(results)), total=len(results), desc="Process: "):
-        sft_instances.extend(to_train_data(ins=results[i], tokenizer=tokenizer))
+        sft_instances.extend(to_train_data(ins=results[i], tokenizer=tokenizer, with_system_prompt=(args.system_prompt is not None)))
 
     sft_instances = [i for i in sft_instances if len(i.inputs.input_ids) < 4096]
     print("len dataset: ", len(sft_instances))
 
     output_dir = os.path.join(args.hf_data_dir, "block")
-    os.system(f"mkdir -p {output_dir}")
-    fp = os.path.join(output_dir, f"{args.idx}.jsonline")
+    # os.system(f"mkdir -p {output_dir}")
+    fp = os.path.join(output_dir, f"{idx}.jsonline")
     write_jsonline(obj=[r.to_dict() for r in sft_instances], fp=fp)
 
 
 if __name__ == '__main__':
     args: Args = fire.Fire(component=Args)
-    main(args=args)
+
+    output_dir = os.path.join(args.hf_data_dir, "block")
+    os.system(f"mkdir -p {output_dir}")
+    with ThreadPoolExecutor(max_workers=32) as executor:
+        future_to_idx = {
+            executor.submit(main, args, i): i
+            for i in range(0, 128)
+        }
+        
+        for future in tqdm(
+            as_completed(future_to_idx),
+            desc="Process TQA: ",
+            total=128,
+        ):
+            try:
+                future.result()
+            except Exception as e:
+                idx = future_to_idx[future]
+                print(f"处理第 {idx} 个实例时出错: {e}")
+                exit(1)

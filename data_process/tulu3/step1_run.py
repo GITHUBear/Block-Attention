@@ -23,8 +23,8 @@ def write_jsonline(fp: str, obj: List[Any]):
             f.write(json.dumps(i, ensure_ascii=False) + "\n")
 
 
-def run(idx: int, hf_data_dir: str):
-    cmd = f"python3 -u data_process/tulu3/preprocess.py --idx {idx} --hf_data_dir {hf_data_dir}"
+def run(idx: int, hf_data_dir: str, model_name: str):
+    cmd = f"python3 -u data_process/tulu3/preprocess.py --idx {idx} --hf_data_dir {hf_data_dir} --model_name {model_name}"
     os.system(cmd)
 
 
@@ -33,13 +33,14 @@ class Args:
     hf_data_dir: str = "datahub/tulu3/hf/"
     output: str = "datahub/tulu3/sft.train"
     skip_preprocess: bool = False
+    model_name: str = "meta-llama/Llama-3.1-8B"
 
 
 def main(args: Args):
     if not args.skip_preprocess:
         handlers = []
         for i in range(0, 1):
-            h = mp.Process(target=run, args=(i, args.hf_data_dir))
+            h = mp.Process(target=run, args=(i, args.hf_data_dir, args.model_name))
             h.start()
             handlers.append(h)
         for h in handlers:

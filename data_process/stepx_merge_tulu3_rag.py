@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, List
 
 from tqdm import tqdm
+import fire
 
 
 def load_jsonline(fp: str) -> List[Any]:
@@ -36,4 +37,5 @@ def main(args: Args):
 
 
 if __name__ == '__main__':
-    main()
+    args: Args = fire.Fire(component=Args)
+    main(args=args)

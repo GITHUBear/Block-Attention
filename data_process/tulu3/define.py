@@ -137,3 +137,40 @@ class SFTInstanceWithChunks:
         obj["uuid"] = str(self.uuid)
         obj["tulu_uuid"] = str(self.tulu_uuid)
         return obj
+
+@dataclass
+class SFTInstanceWithChunksV2:
+    uuid: ObjectId
+    tulu_uuid: ObjectId
+    prompt: str
+    response: str
+    chunks: List[str]
+    inputs: SFTInputs
+    block_inputs: SFTInputs
+    block_tokens: List[int]
+    response_tokens: int
+
+    last_chunk: str
+    inputs2: SFTInputs
+    answer: str
+    block_inputs2: SFTInputs
+    block_tokens2: List[int]
+    response_tokens2: int
+
+    train_block: bool
+
+    @classmethod
+    def from_dict(cls, obj: Dict[str, Any]) -> 'SFTInstanceWithChunks':
+        uuid = ObjectId(obj.pop("uuid"))
+        tulu_uuid = ObjectId(obj.pop("tulu_uuid"))
+        inputs = SFTInputs.from_dict(obj=obj.pop("inputs"))
+        return cls(uuid=uuid, tulu_uuid=tulu_uuid, inputs=inputs, **obj)
+
+    def to_dict(self, skip_inputs: bool = False) -> Dict[str, Any]:
+        if skip_inputs:
+            self.inputs.input_ids = []
+            self.inputs.labels = []
+        obj = asdict(self)
+        obj["uuid"] = str(self.uuid)
+        obj["tulu_uuid"] = str(self.tulu_uuid)
+        return obj

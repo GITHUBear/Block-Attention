@@ -146,7 +146,7 @@ class SFTBlockDataset(Dataset):
         self._prepare_dataset()
 
     def _prepare_dataset(self):
-        dataset: List[SFTInstance] = []
+        dataset = []
         for i, ins in tqdm(
                 enumerate(self.dataset.raw_dataset), desc="Preparing: ", total=len(self.dataset.raw_dataset)
         ):
@@ -160,7 +160,7 @@ class SFTBlockDataset(Dataset):
         self.dataset.raw_dataset = []
 
         for i, ins in tqdm(enumerate(dataset), desc=f"Preparing: ", total=len(dataset)):
-            ins: SFTInstance = process_blocks(ins=ins, tokenizer=self.tokenizer)
+            ins = process_blocks(ins=ins, tokenizer=self.tokenizer)
 
             if len(ins["inputs"]["input_ids"]) > self.max_length:
                 continue
@@ -192,6 +192,35 @@ class SFTBlockDataset(Dataset):
                 "block_tokens": np.array(ins["block_tokens"], dtype=np.int64),
                 "response_tokens": np.array(ins["response_tokens"], dtype=np.int64)
             })
+
+            # assert "inputs2" in ins
+            # if len(ins["inputs2"]["input_ids"]) == 0:
+            #     continue
+
+            # if self.train_full_attention:
+            #     self.raw_dataset.append({
+            #         "input_ids": np.array([ins["inputs2"]["input_ids"]], dtype=np.int64),
+            #         "labels": np.array([ins["inputs2"]["labels"]], dtype=np.int64),
+            #     })
+            
+            # input_ids2 = ins["block_inputs2"]["input_ids"]
+            # if self.add_special_domain_tokens:
+            #     input_ids2 = self._block_attention_tokens + input_ids2
+            #     ins["block_tokens2"][0] += len(self._block_attention_tokens)
+            
+            # if self.train_prompt:
+            #     labels2 = input_ids2
+            # else:
+            #     labels2 = ins["block_inputs2"]["labels"]
+            #     if self.add_special_domain_tokens:
+            #         labels2 = [-100] * len(self._block_attention_tokens) + labels2
+            # self.raw_dataset.append({
+            #     "input_ids": np.array([input_ids2], dtype=np.int64),
+            #     "labels": np.array([labels2], dtype=np.int64),
+            #     "block_tokens": np.array(ins["block_tokens2"], dtype=np.int64),
+            #     "response_tokens": np.array(ins["response_tokens2"], dtype=np.int64)
+            # })
+
 
         random.shuffle(self.raw_dataset)
         gc.collect()
@@ -243,7 +272,7 @@ def get_dataset(
         train_prompt: bool,
         train_full_attention: bool,
         add_special_domain_tokens: bool,
-        num_blocks_limit: int
+        num_blocks_limit: int = -1,
 ) -> SFTBlockDataset:
     dataset = SFTBlockRawDataset(fp=fp, model_name=model_name, max_length=max_length, tokenizer=tokenizer)
     dataset.load_dataset()

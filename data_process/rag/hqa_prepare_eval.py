@@ -22,7 +22,7 @@ SFTDataInstanceInputs = TypedDict("SFTDataInstanceInputs", {
 })
 
 SFTDataInstance = TypedDict("SFTDataInstance", {
-    "prompt": str,
+    "prompt": List[str],
     "question": str,
     "answers": List[str],
     "generated": str,
@@ -35,6 +35,7 @@ SFTDataInstance = TypedDict("SFTDataInstance", {
 class BuildArgs:
     eval_fp: str
     output_dir: str
+    mode: str = "tulu"
 
 
 def mean_pooling(token_embeddings: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -68,7 +69,7 @@ def process_instance(ins: Dict[str, Any]) -> SFTDataInstance:
     documents.sort(key=lambda i: i['score'], reverse=True)
 
     return SFTDataInstance(
-        prompt="",
+        prompt=[],
         question=ins['question'],
         answers=[ins['answer']],
         generated='',
@@ -77,30 +78,25 @@ def process_instance(ins: Dict[str, Any]) -> SFTDataInstance:
     )
 
 
-def tokenizer_instance(ins: SFTDataInstance) -> SFTDataInstance:
-    system_prompt = "You are an intelligent AI assistant. Please answer questions based on the user's instructions. Below are some reference documents that may help you in answering the user's question.\n\n"
-    for d_idx in range(0, len(ins['documents'])):
-        doc = ins["documents"][d_idx]
-        system_prompt += f"- Title: {doc['title']}\n{doc['text'].strip()}\n"
-    system_prompt = system_prompt.strip()
+def tokenizer_instance(ins: SFTDataInstance, mode:str = "tulu") -> SFTDataInstance:
+    if mode == "tulu":
+        ins["prompt"].append("<|user|>\nYou are an intelligent AI assistant. Please answer questions based on the user's instructions. Below are some reference documents that may help you in answering the user's question.\n\n")
+        for d_idx in range(0, len(ins['documents'])):
+            doc = ins["documents"][d_idx]
+            ins["prompt"].append(f"- Title: {doc['title']}\n{doc['text'].strip()}\n")
 
-    user_prompt = f"Please write a high-quality answer for the given question using only the provided search documents (some of which might be irrelevant).\nQuestion: {ins['question']}".strip()
-    prompt = llama3_tokenizer.apply_chat_template(
-        conversation=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        tokenize=False,
-        add_generation_prompt=True
-    )
-    ins["prompt"] = prompt.replace(
-        "<|eot_id|><|start_header_id|>user<|end_header_id|>",
-        "\n<|eot_id|><|start_header_id|>user<|end_header_id|>"
-    )
+        ins["prompt"].append(f"Answer the question based on the given passages. Only give me the answer and do not output any other words.\nQuestion: {ins['question']}\n<|assistant|>\n")
+    else:
+        ins["prompt"].append("[Block-Attention]<|im_start|>system\nYou are an intelligent AI assistant. Please answer questions based on the user's instructions. Below are some reference documents that may help you in answering the user's question.\n\n")
+        for d_idx in range(0, len(ins['documents'])):
+            doc = ins["documents"][d_idx]
+            ins["prompt"].append(f"- Title: {doc['title']}\n{doc['text'].strip()}\n")
+
+        ins["prompt"].append(f"<|im_end|>\n<|im_start|>user\nAnswer the question based on the given passages. Only give me the answer and do not output any other words.\nQuestion: {ins['question']}\n<|im_end|>\n<|im_start|>assistant\n")
     return ins
 
 
-def process_file(input_file: str, output_file: str, num_samples: int):
+def process_file(input_file: str, output_file: str, num_samples: int, mode: str = "tulu"):
     with open(input_file, "r", encoding="utf-8") as f:
         hqa_instances: List[Dict[str, Any]] = json.load(f)
     if num_samples != -1:
@@ -109,7 +105,7 @@ def process_file(input_file: str, output_file: str, num_samples: int):
     dataset: List[SFTDataInstance] = []
     for i in tqdm(range(0, len(hqa_instances)), desc="Process HQA: ", total=len(hqa_instances)):
         ins = process_instance(ins=hqa_instances[i])
-        ins = tokenizer_instance(ins=ins)
+        ins = tokenizer_instance(ins=ins, mode=mode)
         dataset.append(ins)
 
     with open(output_file, "w", encoding="utf-8") as f:
@@ -121,8 +117,9 @@ def parse_args() -> BuildArgs:
     parser = argparse.ArgumentParser()
     parser.add_argument("--eval_fp", type=str)
     parser.add_argument("--output_dir", type=str)
+    parser.add_argument("--mode", type=str, default="tulu")
     args = parser.parse_args()
-    return BuildArgs(eval_fp=args.eval_fp, output_dir=args.output_dir)
+    return BuildArgs(eval_fp=args.eval_fp, output_dir=args.output_dir, mode=args.mode)
 
 
 if __name__ == '__main__':
@@ -146,5 +143,5 @@ if __name__ == '__main__':
         llama3_tokenizer.chat_template = "{% set loop_messages = messages %}{% for message in loop_messages %}{% set content = '<|start_header_id|>' + message['role'] + '<|end_header_id|>\n\n'+ message['content'] | trim + '<|eot_id|>' %}{% if loop.index0 == 0 %}{% set content = bos_token + content %}{% endif %}{{ content }}{% endfor %}{% if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>\n\n' }}{% endif %}"
 
     process_file(
-        input_file=args.eval_fp, output_file=os.path.join(args.output_dir, "hqa_eval", "dataset"), num_samples=-1
+        input_file=args.eval_fp, output_file=os.path.join(args.output_dir, "hqa_eval", "dataset"), num_samples=-1, mode=args.mode
     )

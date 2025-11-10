@@ -37,7 +37,7 @@ class Args:
 if __name__ == '__main__':
     args: Args = fire.Fire(component=Args)
     dataset: List[TuluInstance] = load_tulu_dataset(data_dir=args.hf_data_dir)
-
+    # print(f"{len(dataset)} dataset")
     random.seed(42)
     random.shuffle(dataset)
 

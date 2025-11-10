@@ -92,6 +92,10 @@ python3 data_process/tulu3/step1_run.py
 python3 data_process/tulu3/step2_run_block.py 
 ```
 
+```bash
+python3 data_process/tulu3/step2_run_block.py --model_name Qwen/Qwen2.5-7B-Instruct --system_prompt 'You are Qwen, created by Alibaba Cloud. You are a helpful assistant.'
+```
+
 After completing the above steps, we will obtain `datahub/tulu3/sft.train` for supervised fine-tuning (SFT) and
 `datahub/tulu3/block.train` for our Block-Attention fine-tuning.
 
@@ -141,10 +145,10 @@ bash get-data.sh
 
 # back to Block-Attention
 cd Block-Attention/datahub
-ln -s FiD/open_domain_data/TQA/test.json tqa/test.json
-ln -s FiD/open_domain_data/TQA/train.json tqa/train.json
-ln -s FiD/open_domain_data/NQ/test.json nq/test.json
-ln -s FiD/open_domain_data/NQ/train.json nq/train.json
+ln -sf datahub/FiD/open_domain_data/TQA/test.json tqa/test.json
+ln -sf datahub/FiD/open_domain_data/TQA/train.json tqa/train.json
+ln -sf datahub/FiD/open_domain_data/NQ/test.json nq/test.json
+ln -sf datahub/FiD/open_domain_data/NQ/train.json nq/train.json
 ```
 
 - HQA
@@ -173,13 +177,13 @@ wget http://curtis.ml.cmu.edu/datasets/hotpot/hotpot_dev_distractor_v1.json
    ```bash 
    mkdir -p datahub/rag
    
-   python3 data_process/rag/hqa.py --eval_fp datahub/hqa/hotpot_dev_distractor_v1.json --output_dir datahub/rag
+   python3 data_process/rag/hqa.py --eval_fp datahub/hqa/hotpot_dev_distractor_v1.json --output_dir datahub/rag --model_name Qwen/Qwen2.5-7B-Instruct
    
-   python3 data_process/rag/nq.py --eval_fp datahub/nq/test.json --output_dir datahub/rag
+   python3 data_process/rag/nq.py --eval_fp datahub/nq/test.json --output_dir datahub/rag --model_name Qwen/Qwen2.5-7B-Instruct
    
-   python3 data_process/rag/tqa.py --eval_fp datahub/tqa/test.json --train_fp datahub/tqa/train.json --output_dir datahub/rag
+   python3 data_process/rag/tqa.py --eval_fp datahub/FiD/open_domain_data/TQA/test.json --train_fp datahub/FiD/open_domain_data/TQA/train.json --output_dir datahub/rag --model_name Qwen/Qwen2.5-7B-Instruct
    
-   python3 data_process/rag/2wiki.py --dev_fp datahub/2wiki/dev.parquet --train_fp datahub/2wiki/train.parquet --output_dir datahub/rag
+   python3 data_process/rag/2wiki.py --dev_fp datahub/2wiki/dev.parquet --train_fp datahub/2wiki/train.parquet --output_dir datahub/rag --model_name Qwen/Qwen2.5-7B-Instruct
    ```
 
 3. Construct Train Set
@@ -230,6 +234,8 @@ wget http://curtis.ml.cmu.edu/datasets/hotpot/hotpot_dev_distractor_v1.json
 
        ```bash 
        python3 data_process/rag/step2_to_tulu_format.py --input datahub/rag/tqa_2wiki_p20k --output datahub/rag/rag.train
+
+       python3 data_process/rag/step2_to_tulu_format.py --input datahub/rag/tqa_2wiki_p20k --output datahub/rag/rag.train --model_name Qwen/Qwen2.5-7B-Instruct
        ```
 
     5. Mix tulu3 data and rag data

@@ -35,6 +35,7 @@ SFTDataInstance = TypedDict("SFTDataInstance", {
 class BuildArgs:
     eval_fp: str
     output_dir: str
+    model_name: str
 
 
 def mean_pooling(token_embeddings: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -85,7 +86,7 @@ def tokenizer_instance(ins: SFTDataInstance) -> SFTDataInstance:
     system_prompt = system_prompt.strip()
 
     user_prompt = f"Please write a high-quality answer for the given question using only the provided search documents (some of which might be irrelevant).\nQuestion: {ins['question']}".strip()
-    prompt = llama3_tokenizer.apply_chat_template(
+    prompt = tokenizer.apply_chat_template(
         conversation=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -93,10 +94,7 @@ def tokenizer_instance(ins: SFTDataInstance) -> SFTDataInstance:
         tokenize=False,
         add_generation_prompt=True
     )
-    ins["prompt"] = prompt.replace(
-        "<|eot_id|><|start_header_id|>user<|end_header_id|>",
-        "\n<|eot_id|><|start_header_id|>user<|end_header_id|>"
-    )
+    ins["prompt"] = prompt
     return ins
 
 
@@ -121,8 +119,9 @@ def parse_args() -> BuildArgs:
     parser = argparse.ArgumentParser()
     parser.add_argument("--eval_fp", type=str)
     parser.add_argument("--output_dir", type=str)
+    parser.add_argument("--model_name", type=str)
     args = parser.parse_args()
-    return BuildArgs(eval_fp=args.eval_fp, output_dir=args.output_dir)
+    return BuildArgs(eval_fp=args.eval_fp, output_dir=args.output_dir, model_name=args.model_name)
 
 
 if __name__ == '__main__':
@@ -138,12 +137,12 @@ if __name__ == '__main__':
         device_map="cuda:0"
     )
 
-    llama3_tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(
-        pretrained_model_name_or_path="/data/shanhaikang.shk/model/modelscope/models/LLM-Research/Meta-Llama-3.1-8B",
+    tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(
+        pretrained_model_name_or_path=args.model_name,
         use_fast=False
     )
-    if llama3_tokenizer.chat_template is None:
-        llama3_tokenizer.chat_template = "{% set loop_messages = messages %}{% for message in loop_messages %}{% set content = '<|start_header_id|>' + message['role'] + '<|end_header_id|>\n\n'+ message['content'] | trim + '<|eot_id|>' %}{% if loop.index0 == 0 %}{% set content = bos_token + content %}{% endif %}{{ content }}{% endfor %}{% if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>\n\n' }}{% endif %}"
+    if tokenizer.chat_template is None:
+        tokenizer.chat_template = "{% set loop_messages = messages %}{% for message in loop_messages %}{% set content = '<|start_header_id|>' + message['role'] + '<|end_header_id|>\n\n'+ message['content'] | trim + '<|eot_id|>' %}{% if loop.index0 == 0 %}{% set content = bos_token + content %}{% endif %}{{ content }}{% endfor %}{% if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>\n\n' }}{% endif %}"
 
     process_file(
         input_file=args.eval_fp, output_file=os.path.join(args.output_dir, "hqa_eval", "dataset"), num_samples=-1

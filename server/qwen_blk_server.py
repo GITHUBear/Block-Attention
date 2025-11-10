@@ -9,7 +9,7 @@ from typing import List, Optional, Tuple, TypedDict, Union
 
 from transformers.cache_utils import DynamicCache
 from transformers.modeling_outputs import CausalLMOutputWithPast
-from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding, LlamaConfig, LlamaForCausalLM
+from transformers.models.qwen2.modeling_qwen2 import Qwen2RotaryEmbedding, Qwen2ForCausalLM, Qwen2Config
 
 from transformers import (
     AutoTokenizer, PreTrainedTokenizer, AutoModelForCausalLM, GenerationConfig, AutoConfig
@@ -63,7 +63,7 @@ def apply_rotary_pos_emb(k, cos, sin, position_ids=None, unsqueeze_dim=1):
     k_embed = (k * cos) + (rotate_half(k) * sin)
     return k_embed
 
-def apply_pkv_rotary_position_embeddings(pkv: DynamicCache, emb: LlamaRotaryEmbedding) -> DynamicCache:
+def apply_pkv_rotary_position_embeddings(pkv: DynamicCache, emb: Qwen2RotaryEmbedding) -> DynamicCache:
     device = pkv.layers[0].keys.device
     emb.to(device=device)
     position_ids = torch.arange(start=0, end=pkv.layers[0].keys.size(-2), dtype=torch.int64, device=device)
@@ -75,7 +75,7 @@ def apply_pkv_rotary_position_embeddings(pkv: DynamicCache, emb: LlamaRotaryEmbe
         )
     return pkv
 
-def apply_pkv_rerotary_position_embeddings(pkv: DynamicCache, emb: LlamaRotaryEmbedding) -> DynamicCache:
+def apply_pkv_rerotary_position_embeddings(pkv: DynamicCache, emb: Qwen2RotaryEmbedding) -> DynamicCache:
     device = pkv.layers[0].keys.device
     emb.to(device=device)
     position_ids = torch.arange(start=0, end=pkv.layers[0].keys.size(-2), dtype=torch.int64, device=device)
@@ -89,8 +89,8 @@ def apply_pkv_rerotary_position_embeddings(pkv: DynamicCache, emb: LlamaRotaryEm
 
 @torch.no_grad()
 def build_block_past_key_values(
-        blocks: List[str], instruction: str, tokenizer: PreTrainedTokenizer, model: LlamaForCausalLM,
-        emb: LlamaRotaryEmbedding, num_local_attention_blocks: int
+        blocks: List[str], instruction: str, tokenizer: PreTrainedTokenizer, model: Qwen2ForCausalLM,
+        emb: Qwen2RotaryEmbedding, num_local_attention_blocks: int
 ) -> Tuple[Optional[List[DynamicCache]], torch.Tensor]:
     if len(blocks) > num_local_attention_blocks:
         instruction = "".join(blocks[num_local_attention_blocks:]) + instruction
@@ -122,6 +122,7 @@ def build_block_past_key_values(
         output: CausalLMOutputWithPast = model(
             input_ids=block_input_ids, use_cache=True, past_key_values=DynamicCache(), return_dict=True
         )
+        # output.past_key_values.layers[0].keys
         pkv = apply_pkv_rerotary_position_embeddings(pkv=output.past_key_values, emb=emb)
         caches.append(pkv)
 
@@ -135,7 +136,7 @@ def build_block_past_key_values(
     input_ids = torch.cat(tensors=[input_ids, response_input_ids], dim=-1)
     return caches, input_ids
 
-def merge_and_rotary_past_key_values(pkvs: List[DynamicCache], emb: LlamaRotaryEmbedding) -> DynamicCache:
+def merge_and_rotary_past_key_values(pkvs: List[DynamicCache], emb: Qwen2RotaryEmbedding) -> DynamicCache:
     cache = pkvs[0]
     for l_idx in range(0, len(cache.layers)):
         cache.layers[l_idx].keys = torch.cat(
@@ -151,8 +152,8 @@ def merge_and_rotary_past_key_values(pkvs: List[DynamicCache], emb: LlamaRotaryE
 
 @torch.no_grad()
 def block_generate(
-        blocks: List[str], instruction: str, generation_config: GenerationConfig, model: LlamaForCausalLM,
-        emb: LlamaRotaryEmbedding, tokenizer: PreTrainedTokenizer, num_local_attention_blocks: int
+        blocks: List[str], instruction: str, generation_config: GenerationConfig, model: Qwen2ForCausalLM,
+        emb: Qwen2RotaryEmbedding, tokenizer: PreTrainedTokenizer, num_local_attention_blocks: int
 ) -> str:
     past_key_values, input_ids = build_block_past_key_values(
         blocks=blocks, instruction=instruction, tokenizer=tokenizer, model=model, emb=emb,
@@ -171,6 +172,13 @@ def block_generate(
 @app.route('/generate', methods=['POST'])
 def _block_generate():
     form = request.get_json()
+    if remove_special_token:
+        form["blocks"][0] = form["blocks"][0][len("[Block-Attention]"):]
+    # form["blocks"][-1] = form["blocks"][-1].replace(
+    #     "Answer the question based on the given passages. Only give me the answer and do not output any other words.", 
+    #     "Please write a high-quality answer for the given question using only the provided search documents (some of which might be irrelevant)."
+    # )
+    # print(form["blocks"])
     generated = block_generate(
         blocks=form["blocks"][:-1],
         instruction=form["blocks"][-1],
@@ -188,9 +196,13 @@ class Args:
     model: str
     port: int
     dtype: str
+    remove_special_token: bool = False
 
 if __name__ == '__main__':
     args: Args = fire.Fire(component=Args)
+    remove_special_token = args.remove_special_token
+    print(f"remove_special_token {remove_special_token}")
+
     tokenizer = AutoTokenizer.from_pretrained(
         pretrained_model_name_or_path=args.model,
     )
@@ -202,8 +214,8 @@ if __name__ == '__main__':
         attn_implementation="flash_attention_2"
     )
     model.eval()
-    config: LlamaConfig = AutoConfig.from_pretrained(pretrained_model_name_or_path=args.model)
-    emb: LlamaRotaryEmbedding = LlamaRotaryEmbedding(config=config).to(device=model.device)
+    config: Qwen2Config = AutoConfig.from_pretrained(pretrained_model_name_or_path=args.model)
+    emb:Qwen2RotaryEmbedding = Qwen2RotaryEmbedding(config=config).to(device=model.device)
     emb.eval()
 
     generation_config = GenerationConfig(
@@ -216,3 +228,5 @@ if __name__ == '__main__':
         stop_strings=['<|im_end|>', "<|eot_id|>", "<|end_of_text|>", "<|endoftext|>", "</s>", "Question:"]
     )
     app.run(host="0.0.0.0", port=args.port)
+
+
